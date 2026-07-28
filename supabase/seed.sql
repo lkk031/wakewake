@@ -1,0 +1,2 @@
+-- Seed data is intentionally empty.
+-- Local development users should be created through Supabase Auth.

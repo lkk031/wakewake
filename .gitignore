@@ -1,0 +1,38 @@
+node_modules/
+.pnpm-store/
+.expo/
+dist/
+coverage/
+
+# Downloaded and generated Android packages
+*.apk
+*.aab
+
+# Local SQLite databases and journals (never commit personal V1 data)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+
+# User-created JSON backups and temporary export files
+backups/
+*.wakewake.json
+*.wakewake-backup.json
+*.wakewake.tmp
+
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+apps/mobile/.expo/
+apps/mobile/web-build/
+apps/mobile/dist-web/
+apps/mobile/dist-*/
+supabase/.branches/
+supabase/.temp/

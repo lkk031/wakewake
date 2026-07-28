@@ -1,0 +1,9 @@
+node_modules
+.pnpm-lock.yaml
+.expo
+dist
+**/dist-*/
+**/expo-env.d.ts
+coverage
+supabase/.temp
+apps/mobile/android
