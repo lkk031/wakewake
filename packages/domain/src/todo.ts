@@ -61,6 +61,35 @@ export const TodoSchema = z
         message: '无日期事项不能设置提醒',
       });
     }
+    if (todo.timing.kind === 'timed') {
+      for (const [index, reminder] of todo.reminders.entries()) {
+        if (reminder.anchor === 'start' && todo.timing.startAt === null) {
+          context.addIssue({
+            code: 'custom',
+            path: ['reminders', index, 'anchor'],
+            message: '开始时间提醒需要事项开始时间',
+          });
+        }
+        if (reminder.anchor === 'due' && todo.timing.dueAt === null) {
+          context.addIssue({
+            code: 'custom',
+            path: ['reminders', index, 'anchor'],
+            message: '截止时间提醒需要事项截止时间',
+          });
+        }
+      }
+    }
+    if (todo.timing.kind === 'allDay') {
+      for (const [index, reminder] of todo.reminders.entries()) {
+        if (reminder.anchor === 'due') {
+          context.addIssue({
+            code: 'custom',
+            path: ['reminders', index, 'anchor'],
+            message: '全天事项只能设置开始时间提醒',
+          });
+        }
+      }
+    }
     if (todo.timing.kind === 'unscheduled' && todo.recurrence !== null) {
       context.addIssue({
         code: 'custom',

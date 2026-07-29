@@ -73,7 +73,7 @@ export class SettingsRepository {
 
   public async getDefaultReminders(): Promise<ReminderRule[]> {
     const rows = await this.database.getAllAsync<ReminderRuleRow>(
-      `SELECT id, offset_minutes, sort_order FROM default_reminder_rules
+      `SELECT id, anchor, offset_minutes, sort_order FROM default_reminder_rules
        ORDER BY sort_order, id`,
       [],
     );
@@ -86,9 +86,9 @@ export class SettingsRepository {
       await transaction.runAsync('DELETE FROM default_reminder_rules', []);
       for (const [sortOrder, reminder] of reminders.entries()) {
         await transaction.runAsync(
-          `INSERT INTO default_reminder_rules (id, offset_minutes, sort_order)
-           VALUES (?, ?, ?)`,
-          [reminder.id, reminder.offsetMinutes, sortOrder],
+          `INSERT INTO default_reminder_rules (id, anchor, offset_minutes, sort_order)
+           VALUES (?, ?, ?, ?)`,
+          [reminder.id, reminder.anchor, reminder.offsetMinutes, sortOrder],
         );
       }
     });

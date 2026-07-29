@@ -1,7 +1,7 @@
 import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { BACKUP_VERSION, BackupSchema, type BackupV1 } from '@wakewake/domain';
+import { BACKUP_VERSION, BackupV3Schema, type BackupV3 } from '@wakewake/domain';
 
 import type { BackupRepository } from '@/db/repositories/BackupRepository';
 import { parseBackup, serializeBackup } from './backupFormat';
@@ -11,7 +11,7 @@ export { parseBackup, serializeBackup } from './backupFormat';
 export const MAX_BACKUP_BYTES = 10 * 1_024 * 1_024;
 
 export interface PickedBackup {
-  backup: BackupV1;
+  backup: BackupV3;
   name: string;
 }
 
@@ -54,8 +54,8 @@ export class BackupService {
     return { backup: parseBackup(text), name: asset.name };
   }
 
-  public async replaceFromBackup(backupValue: BackupV1, now = new Date()): Promise<string> {
-    const backup = BackupSchema.parse(backupValue);
+  public async replaceFromBackup(backupValue: BackupV3, now = new Date()): Promise<string> {
+    const backup = BackupV3Schema.parse(backupValue);
     const current = await this.backupRepository.createBackup(now);
     const recoveryFile = new File(Paths.document, backupFilename('wakewake-pre-import', now));
     recoveryFile.create({ overwrite: false });

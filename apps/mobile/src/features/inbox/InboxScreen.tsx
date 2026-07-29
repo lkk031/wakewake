@@ -1,7 +1,7 @@
-import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { CompletionCheckbox } from '@/components/CompletionCheckbox';
 import { EmptyState } from '@/components/EmptyState';
 import { FloatingCreateButton } from '@/components/FloatingCreateButton';
 import { Screen } from '@/components/Screen';
@@ -43,32 +43,15 @@ export function InboxScreen() {
                   onPress={() => router.push({ pathname: '/todo/[id]', params: { id: todo.id } })}
                   style={[styles.row, { borderBottomColor: theme.color.border }]}
                 >
-                  <Pressable
-                    accessibilityRole="checkbox"
-                    accessibilityLabel={completed ? '恢复未完成' : '标记完成'}
-                    accessibilityState={{ checked: completed }}
+                  <CompletionCheckbox
+                    completed={completed}
                     onPress={() =>
                       void setCompletion.mutateAsync({
                         todoId: todo.id,
                         completedAt: completed ? null : new Date(),
                       })
                     }
-                    style={[
-                      styles.checkbox,
-                      {
-                        borderColor: completed ? theme.color.accent : theme.color.textMuted,
-                        backgroundColor: completed ? theme.color.accent : 'transparent',
-                      },
-                    ]}
-                  >
-                    {completed ? (
-                      <Ionicons
-                        name="checkmark"
-                        size={15}
-                        color={theme.isDark ? theme.color.background : theme.color.surface}
-                      />
-                    ) : null}
-                  </Pressable>
+                  />
                   <View style={styles.copy}>
                     <Text
                       style={[
@@ -109,14 +92,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     gap: 13,
     borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  checkbox: {
-    width: 23,
-    height: 23,
-    borderWidth: 1.5,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   copy: { flex: 1 },
   title: { fontSize: 15, fontWeight: '700' },

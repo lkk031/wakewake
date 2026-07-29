@@ -13,4 +13,11 @@ export const todoKeys = {
 export const settingsKeys = {
   all: ['settings'] as const,
   defaultReminders: ['settings', 'default-reminders'] as const,
+  todoTemplates: ['settings', 'todo-templates'] as const,
+};
+
+export const notificationKeys = {
+  all: ['notifications'] as const,
+  permission: ['notifications', 'permission'] as const,
+  syncStatus: ['notifications', 'sync-status'] as const,
 };

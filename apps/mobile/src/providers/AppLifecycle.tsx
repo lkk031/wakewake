@@ -2,15 +2,38 @@ import { focusManager } from '@tanstack/react-query';
 import { type PropsWithChildren, useEffect } from 'react';
 import { AppState } from 'react-native';
 
+import { reconcileNotificationsSafely } from '@/query/notificationQueries';
 import { queryClient } from '@/query/queryClient';
-import { settingsKeys, todoKeys } from '@/query/queryKeys';
+import { notificationKeys, settingsKeys, todoKeys } from '@/query/queryKeys';
 import { getDeviceTimezone } from '@/services/localization/deviceTimezone';
 import { useAppServices } from './AppServicesProvider';
+
+interface AppStateObserverActions {
+  setFocused: (focused: boolean) => void;
+  refreshActiveState: (forceRearm: boolean) => void | Promise<void>;
+}
+
+export function createAppStateObserver({
+  setFocused,
+  refreshActiveState,
+}: AppStateObserverActions): (status: string | null) => void {
+  let hasObservedActive = false;
+
+  return (status) => {
+    const active = status === 'active';
+    setFocused(active);
+    if (!active) return;
+
+    const forceRearm = !hasObservedActive;
+    hasObservedActive = true;
+    void refreshActiveState(forceRearm);
+  };
+}
 
 export function AppLifecycle({ children }: PropsWithChildren) {
   const { notificationCoordinator, settingsRepository } = useAppServices();
   useEffect(() => {
-    const refreshActiveState = async () => {
+    const refreshActiveState = async (forceRearm: boolean) => {
       try {
         const changed = await settingsRepository.synchronizeSystemTimezone(getDeviceTimezone());
         if (changed) {
@@ -19,16 +42,22 @@ export function AppLifecycle({ children }: PropsWithChildren) {
       } catch {
         // A localization failure must not block data refresh or notification repair.
       }
-      await queryClient.invalidateQueries({ queryKey: todoKeys.all });
-      await notificationCoordinator.reconcile().catch(() => undefined);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: todoKeys.all }),
+        queryClient.invalidateQueries({ queryKey: notificationKeys.permission }),
+      ]);
+      await reconcileNotificationsSafely(
+        notificationCoordinator,
+        queryClient,
+        forceRearm ? { forceRearm: true } : undefined,
+      );
     };
-    focusManager.setFocused(AppState.currentState === 'active');
-    if (AppState.currentState === 'active') void refreshActiveState();
-    const subscription = AppState.addEventListener('change', (status) => {
-      const active = status === 'active';
-      focusManager.setFocused(active);
-      if (active) void refreshActiveState();
+    const observeAppState = createAppStateObserver({
+      setFocused: (focused) => focusManager.setFocused(focused),
+      refreshActiveState,
     });
+    observeAppState(AppState.currentState);
+    const subscription = AppState.addEventListener('change', observeAppState);
     return () => {
       subscription.remove();
       focusManager.setFocused(undefined);

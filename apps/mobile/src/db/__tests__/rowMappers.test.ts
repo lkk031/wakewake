@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  mapReminderRuleRow,
   mapSettingsRow,
   mapTodoRow,
+  mapTodoTemplateRow,
   todoToPersistence,
   type SettingsRow,
   type TodoRow,
@@ -50,12 +52,74 @@ describe('settings row mapper', () => {
   });
 });
 
+describe('reminder row mapper', () => {
+  it('maps and validates the persisted anchor', () => {
+    expect(
+      mapReminderRuleRow({
+        id: 'bf5283e4-36f6-4c4e-bf2b-1785a02b1127',
+        anchor: 'start',
+        offset_minutes: 10,
+        sort_order: 0,
+      }),
+    ).toEqual({
+      id: 'bf5283e4-36f6-4c4e-bf2b-1785a02b1127',
+      anchor: 'start',
+      offsetMinutes: 10,
+    });
+
+    expect(() =>
+      mapReminderRuleRow({
+        id: 'bf5283e4-36f6-4c4e-bf2b-1785a02b1127',
+        anchor: 'finish',
+        offset_minutes: 10,
+        sort_order: 0,
+      }),
+    ).toThrow();
+  });
+});
+
+describe('template row mapper', () => {
+  it('normalizes the template and maps ordered reminders', () => {
+    expect(
+      mapTodoTemplateRow(
+        {
+          id: '00000000-0000-4000-8001-000000000001',
+          name: '  会议  ',
+          duration_minutes: 30,
+          sort_order: 0,
+        },
+        [
+          {
+            id: '00000000-0000-4000-8001-000000000101',
+            template_id: '00000000-0000-4000-8001-000000000001',
+            anchor: 'start',
+            offset_minutes: 10,
+            sort_order: 0,
+          },
+        ],
+      ),
+    ).toEqual({
+      id: '00000000-0000-4000-8001-000000000001',
+      name: '会议',
+      durationMinutes: 30,
+      reminders: [
+        {
+          id: '00000000-0000-4000-8001-000000000101',
+          anchor: 'start',
+          offsetMinutes: 10,
+        },
+      ],
+    });
+  });
+});
+
 describe('todo row mappers', () => {
   it('validates and normalizes rows with the domain schema', () => {
     const todo = mapTodoRow(baseRow, [
       {
         id: 'bf5283e4-36f6-4c4e-bf2b-1785a02b1127',
         todo_id: baseRow.id,
+        anchor: 'due',
         offset_minutes: 10,
         sort_order: 0,
       },
@@ -66,7 +130,11 @@ describe('todo row mappers', () => {
     if (todo.timing.kind !== 'timed') throw new Error('Expected timed todo');
     expect(todo.timing.startAt).toEqual(new Date('2026-07-26T01:00:00.000Z'));
     expect(todo.reminders).toEqual([
-      { id: 'bf5283e4-36f6-4c4e-bf2b-1785a02b1127', offsetMinutes: 10 },
+      {
+        id: 'bf5283e4-36f6-4c4e-bf2b-1785a02b1127',
+        anchor: 'due',
+        offsetMinutes: 10,
+      },
     ]);
 
     expect(todoToPersistence(todo)).toMatchObject({
@@ -91,6 +159,7 @@ describe('todo row mappers', () => {
         [
           {
             id: 'bf5283e4-36f6-4c4e-bf2b-1785a02b1127',
+            anchor: 'due',
             offset_minutes: 10,
             sort_order: 0,
           },

@@ -1,12 +1,17 @@
 import { addCalendarDays, localDateAt, startOfLocalDateAtHour, weekdayOf } from '@wakewake/domain';
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated';
 
 import { EmptyState } from '@/components/EmptyState';
 import { FloatingCreateButton } from '@/components/FloatingCreateButton';
 import { Screen } from '@/components/Screen';
 import { TodoRow } from '@/features/todos/TodoRow';
-import { compareVisibleTodoItems, selectVisibleTodoItems } from '@/features/todos/visibleTodoItems';
+import {
+  compareVisibleTodoItems,
+  partitionVisibleTodoItemsByCompletion,
+  selectVisibleTodoItems,
+} from '@/features/todos/visibleTodoItems';
 import { useOccurrenceStates, useTodoRange } from '@/query/todoQueries';
 import { useSettings } from '@/query/settingsQueries';
 import { useAppTheme } from '@/theme/useAppTheme';
@@ -47,6 +52,7 @@ export function CalendarScreen() {
       return instant !== null && localDateAt(instant, timezone) === selectedDate;
     })
     .sort(compareVisibleTodoItems);
+  const selectedSections = partitionVisibleTodoItemsByCompletion(selectedItems);
   const days = Array.from({ length: 7 }, (_, index) => addCalendarDays(weekStart, index));
   const [, month, day] = selectedDate.split('-');
 
@@ -160,22 +166,51 @@ export function CalendarScreen() {
             description="点击右下角添加一项安排。"
           />
         ) : (
-          <View
+          <Animated.View
             style={[
               styles.card,
               { backgroundColor: theme.color.surface, borderColor: theme.color.border },
             ]}
           >
-            {selectedItems.map((item) => (
-              <TodoRow key={item.key} item={item} timezone={timezone} />
+            {selectedSections.unfinished.map((item) => (
+              <Animated.View key={item.key} layout={todoLayoutTransition}>
+                <TodoRow item={item} timezone={timezone} />
+              </Animated.View>
             ))}
-          </View>
+            {selectedSections.completed.length > 0 ? (
+              <Animated.View
+                key="completed-section"
+                layout={todoLayoutTransition}
+                style={[
+                  styles.completedHeader,
+                  {
+                    backgroundColor: theme.color.mintSoft,
+                    borderColor: theme.color.border,
+                  },
+                ]}
+              >
+                <Text style={[styles.completedTitle, { color: theme.color.mintInk }]}>
+                  已完成事项
+                </Text>
+                <Text style={[styles.completedCount, { color: theme.color.textSecondary }]}>
+                  {selectedSections.completed.length} 项
+                </Text>
+              </Animated.View>
+            ) : null}
+            {selectedSections.completed.map((item) => (
+              <Animated.View key={item.key} layout={todoLayoutTransition}>
+                <TodoRow item={item} timezone={timezone} />
+              </Animated.View>
+            ))}
+          </Animated.View>
         )}
       </Screen>
       <FloatingCreateButton initialDate={selectedDate} />
     </View>
   );
 }
+
+const todoLayoutTransition = LinearTransition.duration(220).reduceMotion(ReduceMotion.System);
 
 function itemMatchesDate(
   item: ReturnType<typeof selectVisibleTodoItems>[number],
@@ -222,4 +257,14 @@ const styles = StyleSheet.create({
   dot: { width: 4, height: 4, borderRadius: 2 },
   sectionTitle: { fontSize: 18, fontWeight: '800', marginTop: 28, marginBottom: 14 },
   card: { borderWidth: 1, borderRadius: 20, overflow: 'hidden' },
+  completedHeader: {
+    minHeight: 46,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  completedTitle: { fontSize: 13, fontWeight: '800', letterSpacing: 0.3 },
+  completedCount: { fontSize: 12, fontWeight: '600' },
 });

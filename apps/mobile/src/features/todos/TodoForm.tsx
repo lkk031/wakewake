@@ -1,6 +1,7 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { Controller, useForm } from 'react-hook-form';
+import * as Crypto from 'expo-crypto';
 import { useState } from 'react';
 import {
   Platform,
@@ -12,10 +13,21 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { getWallClockDateTime, wallClockToInstant, type RecurrenceRule } from '@wakewake/domain';
+import {
+  getWallClockDateTime,
+  wallClockToInstant,
+  type RecurrenceRule,
+  type TodoTemplate,
+} from '@wakewake/domain';
 
 import { useAppTheme } from '@/theme/useAppTheme';
-import { todoSubmitErrorMessage, type TodoFormValues } from './todoForm';
+import {
+  applyTodoTemplate,
+  getTodoFormReminderTimings,
+  normalizeRemindersForTimingKind,
+  todoSubmitErrorMessage,
+  type TodoFormValues,
+} from './todoForm';
 import { TodoRecurrenceEditor, TodoReminderEditor } from './TodoRuleEditors';
 
 interface TodoFormProps {
@@ -23,6 +35,7 @@ interface TodoFormProps {
   timezone: string;
   saving: boolean;
   recurrenceLocked?: boolean;
+  templates?: readonly TodoTemplate[];
   onCancel: () => void;
   onSubmit: (values: TodoFormValues) => Promise<void>;
 }
@@ -58,6 +71,7 @@ export function TodoForm({
   timezone,
   saving,
   recurrenceLocked = false,
+  templates = [],
   onCancel,
   onSubmit,
 }: TodoFormProps) {
@@ -65,6 +79,7 @@ export function TodoForm({
   const [picker, setPicker] = useState<PickerField | null>(null);
   const [ruleEditor, setRuleEditor] = useState<'reminders' | 'recurrence' | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [lastAppliedTemplateId, setLastAppliedTemplateId] = useState<string | null>(null);
   const {
     control,
     handleSubmit,
@@ -75,6 +90,12 @@ export function TodoForm({
   const values = watch();
   const inbox = values.timingKind === 'unscheduled';
   const allDay = values.timingKind === 'allDay';
+  const reminderTimings = getTodoFormReminderTimings(values, timezone);
+  const futureReminderTimings = reminderTimings
+    .filter((timing) => !timing.expired)
+    .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime());
+  const allReminderTimingsExpired =
+    values.reminders.length > 0 && reminderTimings.length > 0 && futureReminderTimings.length === 0;
 
   function updatePicker(selected: Date) {
     if (Platform.OS === 'android') setPicker(null);
@@ -155,6 +176,97 @@ export function TodoForm({
           </Text>
         ) : null}
 
+        {!inbox && !allDay && templates.length > 0 ? (
+          <View style={styles.templates}>
+            <Text style={[styles.templatesTitle, { color: theme.color.textSecondary }]}>
+              常用模板
+            </Text>
+            <ScrollView
+              horizontal
+              contentContainerStyle={styles.templateList}
+              showsHorizontalScrollIndicator={false}
+            >
+              {templates.map((template) => {
+                const applied = template.id === lastAppliedTemplateId;
+                return (
+                  <Pressable
+                    key={template.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`套用${template.name}模板`}
+                    accessibilityState={{ selected: applied }}
+                    onPress={() => {
+                      const next = applyTodoTemplate(values, template, timezone, Crypto.randomUUID);
+                      setValue('dueDate', next.dueDate);
+                      setValue('dueTime', next.dueTime);
+                      setValue('reminders', next.reminders);
+                      setLastAppliedTemplateId(template.id);
+                    }}
+                    style={[
+                      styles.template,
+                      {
+                        backgroundColor: applied ? theme.color.accentSoft : theme.color.surface,
+                        borderColor: applied ? theme.color.accent : theme.color.border,
+                      },
+                    ]}
+                  >
+                    <View style={styles.templateHeading}>
+                      <Text
+                        style={[
+                          styles.templateName,
+                          { color: applied ? theme.color.accentInk : theme.color.text },
+                        ]}
+                      >
+                        {template.name}
+                      </Text>
+                      {applied ? (
+                        <View
+                          style={[styles.appliedBadge, { backgroundColor: theme.color.accent }]}
+                        >
+                          <Ionicons
+                            name="checkmark"
+                            size={12}
+                            color={theme.isDark ? theme.color.background : theme.color.surface}
+                          />
+                          <Text
+                            style={[
+                              styles.appliedBadgeText,
+                              {
+                                color: theme.isDark ? theme.color.background : theme.color.surface,
+                              },
+                            ]}
+                          >
+                            已套用
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <Text
+                      style={[
+                        styles.templateHint,
+                        { color: applied ? theme.color.accentInk : theme.color.textSecondary },
+                      ]}
+                    >
+                      {templateDurationLabel(template.durationMinutes)} ·{' '}
+                      {remindersLabel(template.reminders, false)}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+            {lastAppliedTemplateId === null ? null : (
+              <Text
+                accessibilityLiveRegion="polite"
+                style={[styles.templateFeedback, { color: theme.color.accentInk }]}
+              >
+                已套用“
+                {templates.find((template) => template.id === lastAppliedTemplateId)?.name ??
+                  '模板'}
+                ”：截止时间和提醒已更新
+              </Text>
+            )}
+          </View>
+        ) : null}
+
         <View
           style={[
             styles.card,
@@ -165,7 +277,14 @@ export function TodoForm({
             <Switch
               value={inbox}
               disabled={recurrenceLocked}
-              onValueChange={(enabled) => setValue('timingKind', enabled ? 'unscheduled' : 'timed')}
+              onValueChange={(enabled) => {
+                const timingKind = enabled ? 'unscheduled' : 'timed';
+                setValue('timingKind', timingKind);
+                setValue(
+                  'reminders',
+                  normalizeRemindersForTimingKind(values.reminders, timingKind),
+                );
+              }}
               trackColor={{ false: theme.color.border, true: theme.color.accent }}
             />
           </SettingRow>
@@ -175,7 +294,14 @@ export function TodoForm({
                 <Switch
                   value={allDay}
                   disabled={recurrenceLocked}
-                  onValueChange={(enabled) => setValue('timingKind', enabled ? 'allDay' : 'timed')}
+                  onValueChange={(enabled) => {
+                    const timingKind = enabled ? 'allDay' : 'timed';
+                    setValue('timingKind', timingKind);
+                    setValue(
+                      'reminders',
+                      normalizeRemindersForTimingKind(values.reminders, timingKind),
+                    );
+                  }}
                   trackColor={{ false: theme.color.border, true: theme.color.accent }}
                 />
               </SettingRow>
@@ -193,7 +319,7 @@ export function TodoForm({
               ) : (
                 <>
                   <SettingRow
-                    label="开始"
+                    label="开始时间"
                     hint={values.startTime}
                     onPress={recurrenceLocked ? undefined : () => setPicker('startTime')}
                   />
@@ -203,7 +329,7 @@ export function TodoForm({
                     onPress={recurrenceLocked ? undefined : () => setPicker('dueDate')}
                   />
                   <SettingRow
-                    label="截止"
+                    label="截止时间"
                     hint={values.dueTime}
                     onPress={recurrenceLocked ? undefined : () => setPicker('dueTime')}
                   />
@@ -215,7 +341,7 @@ export function TodoForm({
             <>
               <SettingRow
                 label="提醒"
-                hint={remindersLabel(values.reminders.map((rule) => rule.offsetMinutes))}
+                hint={remindersLabel(values.reminders, allDay)}
                 onPress={() => setRuleEditor('reminders')}
               />
               <SettingRow
@@ -231,6 +357,39 @@ export function TodoForm({
             onPress={() => setValue('priority', nextPriority(values.priority))}
           />
         </View>
+
+        {!inbox && values.reminders.length > 0 ? (
+          <View
+            style={[
+              styles.reminderNotice,
+              {
+                backgroundColor: allReminderTimingsExpired
+                  ? theme.color.amberSoft
+                  : theme.color.surface,
+                borderColor: allReminderTimingsExpired ? theme.color.amber : theme.color.border,
+              },
+            ]}
+          >
+            <Text
+              accessibilityLiveRegion={allReminderTimingsExpired ? 'polite' : 'none'}
+              style={[
+                styles.reminderNoticeTitle,
+                { color: allReminderTimingsExpired ? theme.color.amber : theme.color.text },
+              ]}
+            >
+              {allReminderTimingsExpired
+                ? '当前提醒时间均已过'
+                : `下一条提醒：${formatReminderDateTime(futureReminderTimings[0]?.scheduledAt, timezone)}`}
+            </Text>
+            <Text style={[styles.reminderNoticeCopy, { color: theme.color.textSecondary }]}>
+              {allReminderTimingsExpired
+                ? '这些规则不会补发。请调整开始或截止时间，或缩短提前量。重复事项的后续实例仍会继续规划。'
+                : allDay
+                  ? '全天提醒以开始日 09:00 为基准。'
+                  : '日历按开始时间显示；开始提醒随开始时间变化，截止提醒只随截止时间变化。'}
+            </Text>
+          </View>
+        ) : null}
 
         <Controller
           control={control}
@@ -272,6 +431,7 @@ export function TodoForm({
       <TodoReminderEditor
         visible={ruleEditor === 'reminders'}
         value={values.reminders}
+        timingKind={allDay ? 'allDay' : 'timed'}
         onClose={() => setRuleEditor(null)}
         onChange={(next) => setValue('reminders', next)}
       />
@@ -351,15 +511,33 @@ function weekdayForDate(date: string): number {
   return new Date(`${date}T12:00:00.000Z`).getUTCDay();
 }
 
-function remindersLabel(offsets: number[]): string {
-  if (offsets.length === 0) return '不提醒';
-  return offsets
+function formatReminderDateTime(date: Date | undefined, timezone: string): string {
+  if (date === undefined) return '没有未来有效提醒';
+  const parts = getWallClockDateTime(date, timezone);
+  return `${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')} ${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}`;
+}
+
+function templateDurationLabel(minutes: number): string {
+  if (minutes % 1_440 === 0) return `${minutes / 1_440} 天`;
+  if (minutes % 60 === 0) return `${minutes / 60} 小时`;
+  return `${minutes} 分钟`;
+}
+
+function remindersLabel(reminders: TodoFormValues['reminders'], allDay: boolean): string {
+  if (reminders.length === 0) return '不提醒';
+  return reminders
     .slice()
-    .sort((a, b) => b - a)
-    .map((offset) => {
-      if (offset % 1_440 === 0) return `${offset / 1_440} 天前`;
-      if (offset % 60 === 0) return `${offset / 60} 小时前`;
-      return `${offset} 分钟前`;
+    .sort((a, b) => a.anchor.localeCompare(b.anchor) || b.offsetMinutes - a.offsetMinutes)
+    .map((rule) => {
+      const anchor = allDay ? '开始日 09:00' : rule.anchor === 'start' ? '开始' : '截止';
+      if (rule.offsetMinutes === 0) return `${anchor}时`;
+      if (rule.offsetMinutes % 1_440 === 0) {
+        return `${anchor}前 ${rule.offsetMinutes / 1_440} 天`;
+      }
+      if (rule.offsetMinutes % 60 === 0) {
+        return `${anchor}前 ${rule.offsetMinutes / 60} 小时`;
+      }
+      return `${anchor}前 ${rule.offsetMinutes} 分钟`;
     })
     .join('、');
 }
@@ -378,7 +556,38 @@ const styles = StyleSheet.create({
   save: { fontSize: 15, fontWeight: '700', padding: 10 },
   content: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 48 },
   titleInput: { fontSize: 27, fontWeight: '700', paddingVertical: 18, borderBottomWidth: 1 },
+  templates: { marginTop: 24 },
+  templatesTitle: { fontSize: 12, fontWeight: '700', letterSpacing: 0.5, marginBottom: 9 },
+  templateList: { gap: 10, paddingRight: 4 },
+  template: { width: 210, minHeight: 78, borderWidth: 1, borderRadius: 18, padding: 14 },
+  templateHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  templateName: { flexShrink: 1, fontSize: 15, fontWeight: '700' },
+  templateHint: { fontSize: 12, lineHeight: 18, marginTop: 5 },
+  appliedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    borderRadius: 999,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  appliedBadgeText: { fontSize: 10, fontWeight: '800' },
+  templateFeedback: { fontSize: 12, lineHeight: 18, fontWeight: '600', marginTop: 9 },
   card: { borderWidth: 1, borderRadius: 22, overflow: 'hidden', marginTop: 28 },
+  reminderNotice: {
+    borderWidth: 1,
+    borderRadius: 16,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  reminderNoticeTitle: { fontSize: 13, fontWeight: '800' },
+  reminderNoticeCopy: { fontSize: 12, lineHeight: 18, marginTop: 4 },
   row: {
     minHeight: 72,
     flexDirection: 'row',

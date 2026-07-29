@@ -5,12 +5,14 @@ import { BackupRepository } from '@/db/repositories/BackupRepository';
 import { NotificationRepository } from '@/db/repositories/NotificationRepository';
 import { SettingsRepository } from '@/db/repositories/SettingsRepository';
 import { TodoRepository } from '@/db/repositories/TodoRepository';
+import { TodoTemplateRepository } from '@/db/repositories/TodoTemplateRepository';
 import { BackupService } from '@/services/backup/BackupService';
 import { NotificationCoordinator } from '@/services/notifications/NotificationCoordinator';
 import { ExpoNotificationAdapter } from '@/services/notifications/nativeAdapter';
 
 export interface AppServices {
   todoRepository: TodoRepository;
+  todoTemplateRepository: TodoTemplateRepository;
   settingsRepository: SettingsRepository;
   notificationRepository: NotificationRepository;
   notificationCoordinator: NotificationCoordinator;
@@ -26,6 +28,7 @@ export function AppServicesProvider({ children }: PropsWithChildren) {
     const notificationRepository = new NotificationRepository(database);
     return {
       todoRepository,
+      todoTemplateRepository: new TodoTemplateRepository(database),
       settingsRepository: new SettingsRepository(database),
       notificationRepository,
       notificationCoordinator: new NotificationCoordinator(

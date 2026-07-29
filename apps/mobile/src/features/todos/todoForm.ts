@@ -1,13 +1,16 @@
 import {
   addCalendarDays,
+  calculateReminderAt,
   getWallClockDateTime,
   localDateAt,
+  startOfLocalDateAtHour,
   TodoSchema,
   wallClockToInstant,
   type Priority,
   type RecurrenceRule,
   type ReminderRule,
   type Todo,
+  type TodoTemplate,
   type WallClockDateTime,
 } from '@wakewake/domain';
 
@@ -60,7 +63,7 @@ interface TodoFormDefaultOptions {
 export function createTodoFormDefaults(
   timezone: string,
   defaultDurationMinutes: number,
-  reminderTemplates: readonly Pick<ReminderRule, 'offsetMinutes'>[],
+  reminderTemplates: readonly Pick<ReminderRule, 'anchor' | 'offsetMinutes'>[],
   createReminderId: () => string,
   options: TodoFormDefaultOptions = {},
 ): TodoFormValues {
@@ -92,9 +95,31 @@ export function createTodoFormDefaults(
     allDayEndDate: addCalendarDays(localDateAt(startInstant, timezone), 1),
     reminders: reminderTemplates.map((template) => ({
       id: createReminderId(),
+      anchor: template.anchor,
       offsetMinutes: template.offsetMinutes,
     })),
     recurrence: null,
+  };
+}
+
+export function applyTodoTemplate(
+  values: TodoFormValues,
+  template: TodoTemplate,
+  timezone: string,
+  createReminderId: () => string,
+): TodoFormValues {
+  const startInstant = wallClock(values.date, values.startTime, timezone);
+  const dueInstant = new Date(startInstant.getTime() + template.durationMinutes * 60_000);
+  const due = getWallClockDateTime(dueInstant, timezone);
+  return {
+    ...values,
+    dueDate: localDateAt(dueInstant, timezone),
+    dueTime: `${String(due.hour).padStart(2, '0')}:${String(due.minute).padStart(2, '0')}`,
+    reminders: template.reminders.map((rule) => ({
+      id: createReminderId(),
+      anchor: rule.anchor,
+      offsetMinutes: rule.offsetMinutes,
+    })),
   };
 }
 
@@ -149,6 +174,53 @@ export function todoToFormValues(todo: Todo, timezone: string): TodoFormValues {
   };
 }
 
+export function normalizeRemindersForTimingKind(
+  reminders: readonly ReminderRule[],
+  timingKind: TodoFormTimingKind,
+): ReminderRule[] {
+  if (timingKind === 'unscheduled') return [];
+  if (timingKind === 'timed') return reminders.slice();
+
+  const byOffset = new Map<number, ReminderRule>();
+  for (const rule of reminders) {
+    if (rule.anchor === 'start') byOffset.set(rule.offsetMinutes, rule);
+  }
+  for (const rule of reminders) {
+    if (!byOffset.has(rule.offsetMinutes)) {
+      byOffset.set(rule.offsetMinutes, { ...rule, anchor: 'start' });
+    }
+  }
+  return [...byOffset.values()];
+}
+
+export interface TodoFormReminderTiming {
+  rule: ReminderRule;
+  scheduledAt: Date;
+  expired: boolean;
+}
+
+export function getTodoFormReminderTimings(
+  values: TodoFormValues,
+  timezone: string,
+  now = new Date(),
+): TodoFormReminderTiming[] {
+  if (values.timingKind === 'unscheduled') return [];
+
+  const start =
+    values.timingKind === 'allDay'
+      ? startOfLocalDateAtHour(values.date, 9, timezone)
+      : wallClock(values.date, values.startTime, timezone);
+  const due =
+    values.timingKind === 'timed' ? wallClock(values.dueDate, values.dueTime, timezone) : null;
+
+  return values.reminders.flatMap((rule) => {
+    const base = rule.anchor === 'start' ? start : due;
+    if (base === null) return [];
+    const scheduledAt = calculateReminderAt(base, rule.offsetMinutes);
+    return [{ rule, scheduledAt, expired: scheduledAt.getTime() <= now.getTime() }];
+  });
+}
+
 export function todoSubmitErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) return '保存失败，请重试';
 
@@ -194,7 +266,7 @@ export function mapTodoForm(
     priority: values.priority,
     status: existing?.status ?? 'open',
     timing,
-    reminders: values.timingKind === 'unscheduled' ? [] : values.reminders,
+    reminders: normalizeRemindersForTimingKind(values.reminders, values.timingKind),
     recurrence: values.timingKind === 'unscheduled' ? null : values.recurrence,
     completedAt: existing?.completedAt ?? null,
     version: existing === undefined ? 1 : existing.version + 1,

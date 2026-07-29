@@ -3,10 +3,12 @@ import {
   OccurrenceStateSchema,
   ReminderRuleSchema,
   TodoSchema,
+  TodoTemplateSchema,
   type BackupSettings,
   type OccurrenceState,
   type ReminderRule,
   type Todo,
+  type TodoTemplate,
 } from '@wakewake/domain';
 
 export interface TodoRow {
@@ -33,7 +35,16 @@ export interface TodoRow {
 export interface ReminderRuleRow {
   id: string;
   todo_id?: string;
+  template_id?: string;
+  anchor: string;
   offset_minutes: number;
+  sort_order: number;
+}
+
+export interface TodoTemplateRow {
+  id: string;
+  name: string;
+  duration_minutes: number;
   sort_order: number;
 }
 
@@ -108,7 +119,23 @@ function parseDate(value: string, field: string): Date {
 }
 
 export function mapReminderRuleRow(row: ReminderRuleRow): ReminderRule {
-  return ReminderRuleSchema.parse({ id: row.id, offsetMinutes: row.offset_minutes });
+  return ReminderRuleSchema.parse({
+    id: row.id,
+    anchor: row.anchor,
+    offsetMinutes: row.offset_minutes,
+  });
+}
+
+export function mapTodoTemplateRow(
+  row: TodoTemplateRow,
+  reminderRows: ReminderRuleRow[],
+): TodoTemplate {
+  return TodoTemplateSchema.parse({
+    id: row.id,
+    name: row.name,
+    durationMinutes: row.duration_minutes,
+    reminders: reminderRows.map(mapReminderRuleRow),
+  });
 }
 
 export function mapTodoRow(row: TodoRow, reminderRows: ReminderRuleRow[]): Todo {

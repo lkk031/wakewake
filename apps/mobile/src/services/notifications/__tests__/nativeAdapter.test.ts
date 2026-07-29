@@ -23,11 +23,13 @@ describe('Expo notification adapter runtime support', () => {
       status: 'unsupported',
       granted: false,
       canAskAgain: false,
+      channelState: 'not-applicable',
     });
     await expect(adapter.requestPermission()).resolves.toEqual({
       status: 'unsupported',
       granted: false,
       canAskAgain: false,
+      channelState: 'not-applicable',
     });
     await expect(adapter.ensureChannel()).resolves.toBeUndefined();
     await expect(adapter.listScheduled()).resolves.toEqual([]);

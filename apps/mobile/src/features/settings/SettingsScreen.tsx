@@ -7,17 +7,28 @@ import { Screen } from '@/components/Screen';
 import { useExportBackup, usePickBackup, useReplaceBackup } from '@/query/backupQueries';
 import {
   useNotificationPermission,
+  useNotificationSyncStatus,
+  useReconcileNotifications,
   useRequestNotificationPermission,
   useTestNotification,
 } from '@/query/notificationQueries';
 import {
+  useCreateTodoTemplate,
   useDefaultReminders,
+  useDeleteTodoTemplate,
+  useReorderTodoTemplates,
   useSetDefaultReminders,
   useSettings,
+  useTodoTemplates,
   useUpdateSettings,
+  useUpdateTodoTemplate,
 } from '@/query/settingsQueries';
+import type { ReminderRule } from '@wakewake/domain';
+
 import { useAppTheme } from '@/theme/useAppTheme';
 import { DurationEditor, ReminderEditor, ThemeEditor, TimezoneEditor } from './SettingsEditors';
+import { TodoTemplatesEditor } from './TodoTemplatesEditor';
+import { notificationPermissionLabel, notificationSyncLabel } from './notificationStatus';
 
 interface SettingsRow {
   icon: ComponentProps<typeof Ionicons>['name'];
@@ -33,14 +44,21 @@ interface SettingsSection {
 
 export function SettingsScreen() {
   const theme = useAppTheme();
-  const [editor, setEditor] = useState<'theme' | 'reminders' | 'timezone' | 'duration' | null>(
-    null,
-  );
+  const [editor, setEditor] = useState<
+    'theme' | 'reminders' | 'templates' | 'timezone' | 'duration' | null
+  >(null);
   const settings = useSettings();
   const reminders = useDefaultReminders();
+  const templates = useTodoTemplates();
   const updateSettings = useUpdateSettings();
   const setDefaultReminders = useSetDefaultReminders();
+  const createTemplate = useCreateTodoTemplate();
+  const updateTemplate = useUpdateTodoTemplate();
+  const deleteTemplate = useDeleteTodoTemplate();
+  const reorderTemplates = useReorderTodoTemplates();
   const permission = useNotificationPermission();
+  const syncStatus = useNotificationSyncStatus();
+  const reconcileNotifications = useReconcileNotifications();
   const requestPermission = useRequestNotificationPermission();
   const testNotification = useTestNotification();
   const exportBackup = useExportBackup();
@@ -49,6 +67,10 @@ export function SettingsScreen() {
   const permissionState = permission.data;
 
   async function enableNotifications() {
+    if (permissionState?.channelState === 'blocked') {
+      await Linking.openSettings();
+      return;
+    }
     if (permissionState?.status === 'denied' && !permissionState.canAskAgain) {
       await Linking.openSettings();
       return;
@@ -65,9 +87,17 @@ export function SettingsScreen() {
   async function sendTestNotification() {
     try {
       await testNotification.mutateAsync();
-      Alert.alert('测试提醒已安排', '约 10 秒后会收到一条本地通知。');
-    } catch {
-      Alert.alert('无法安排测试提醒', '请先开启通知权限。');
+      Alert.alert('测试提醒已登记', '约 10 秒后触发；系统省电策略可能造成延迟。');
+    } catch (error) {
+      const message = errorMessage(error);
+      Alert.alert(
+        '无法登记测试提醒',
+        message.includes('channel')
+          ? '“事项提醒”通知类别已关闭，请在系统设置中重新开启。'
+          : message.includes('permission')
+            ? '请先开启通知权限。'
+            : '原生通知登记失败，请检查提醒同步状态后重试。',
+      );
     }
   }
 
@@ -125,8 +155,14 @@ export function SettingsScreen() {
         {
           icon: 'notifications-outline' as const,
           title: '默认提醒',
-          value: remindersLabel(reminders.data?.map((rule) => rule.offsetMinutes) ?? []),
+          value: remindersLabel(reminders.data ?? []),
           onPress: settings.data && reminders.data ? () => setEditor('reminders') : undefined,
+        },
+        {
+          icon: 'duplicate-outline' as const,
+          title: '常用模板',
+          value: templates.data ? `${templates.data.length} 个 · 可编辑和排序` : '读取中',
+          onPress: templates.data ? () => setEditor('templates') : undefined,
         },
         {
           icon: 'time-outline' as const,
@@ -150,19 +186,33 @@ export function SettingsScreen() {
         {
           icon: 'shield-checkmark-outline' as const,
           title: '通知权限',
-          value: permissionLabel(permissionState?.status),
+          value: notificationPermissionLabel(permissionState),
           onPress: enableNotifications,
+        },
+        {
+          icon: 'sync-outline' as const,
+          title: '提醒同步',
+          value: notificationSyncLabel(syncStatus.data),
+          onPress: reconcileNotifications.isPending
+            ? undefined
+            : () => void reconcileNotifications.mutateAsync(),
         },
         {
           icon: 'alarm-outline' as const,
           title: '发送测试提醒',
-          value: permissionState?.granted ? '10 秒后送达' : '开启权限后可用',
+          value: permissionState?.granted ? '约 10 秒后触发 · 系统可能延迟' : '开启权限后可用',
           onPress: permissionState?.granted ? sendTestNotification : enableNotifications,
         },
         {
           icon: 'eye-off-outline' as const,
           title: '通知内容',
           value: '默认隐藏事项标题和备注',
+        },
+        {
+          icon: 'information-circle-outline' as const,
+          title: '后台与强行停止',
+          value:
+            '通常划掉最近任务不影响已登记提醒；部分厂商可能清理或延迟。系统强行停止后，需重新打开 WakeWake 修复未来提醒。',
         },
       ],
     },
@@ -222,6 +272,23 @@ export function SettingsScreen() {
                 Alert.alert('保存失败', errorMessage(error));
               }
             }}
+          />
+          <TodoTemplatesEditor
+            visible={editor === 'templates'}
+            templates={templates.data ?? []}
+            saving={
+              createTemplate.isPending ||
+              updateTemplate.isPending ||
+              deleteTemplate.isPending ||
+              reorderTemplates.isPending
+            }
+            onClose={() => setEditor(null)}
+            onCreate={(template) => createTemplate.mutateAsync(template)}
+            onUpdate={(template) => updateTemplate.mutateAsync(template)}
+            onDelete={async (id) => {
+              await deleteTemplate.mutateAsync(id);
+            }}
+            onReorder={(ids) => reorderTemplates.mutateAsync(ids)}
           />
           <TimezoneEditor
             visible={editor === 'timezone'}
@@ -321,28 +388,13 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '发生未知错误';
 }
 
-function permissionLabel(status?: string): string {
-  return (
-    {
-      granted: '已允许',
-      denied: '已拒绝 · 点击打开',
-      undetermined: '尚未请求 · 点击开启',
-      unsupported: '当前平台不支持',
-    }[status ?? ''] ?? '读取中'
-  );
-}
-
-function remindersLabel(offsets: number[]): string {
-  if (offsets.length === 0) return '不提醒';
-  return offsets
-    .slice()
-    .sort((a, b) => b - a)
-    .map((offset) => {
-      if (offset % 1_440 === 0) return `${offset / 1_440} 天`;
-      if (offset % 60 === 0) return `${offset / 60} 小时`;
-      return `${offset} 分钟`;
-    })
-    .join('、');
+function remindersLabel(reminders: readonly ReminderRule[]): string {
+  if (reminders.length === 0) return '不提醒';
+  const starts = reminders.filter((rule) => rule.anchor === 'start').length;
+  const dues = reminders.length - starts;
+  return [`开始 ${starts} 条`, `截止 ${dues} 条`]
+    .filter((_, index) => (index === 0 ? starts : dues) > 0)
+    .join(' · ');
 }
 
 const styles = StyleSheet.create({

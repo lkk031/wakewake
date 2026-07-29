@@ -2,7 +2,7 @@
   "expo": {
     "name": "WakeWake",
     "slug": "wakewake",
-    "version": "1.0.0",
+    "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "wakewake",
@@ -19,7 +19,8 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "app.wakewake.mobile"
+      "package": "app.wakewake.mobile",
+      "versionCode": 5
     },
     "web": {
       "bundler": "metro",

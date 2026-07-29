@@ -1,4 +1,4 @@
-import { BACKUP_FORMAT, BACKUP_VERSION, BackupV1Schema, type BackupV1 } from '@wakewake/domain';
+import { BACKUP_FORMAT, BACKUP_VERSION, BackupV3Schema, type BackupV3 } from '@wakewake/domain';
 
 import { validateBackupIntegrity } from '@/services/backup/backupFormat';
 import type { DatabaseExecutor, TransactionDatabase } from '../transaction';
@@ -6,20 +6,24 @@ import { withTransaction } from '../transaction';
 import { todoToPersistence } from '../rowMappers';
 import { SettingsRepository } from './SettingsRepository';
 import { TodoRepository } from './TodoRepository';
+import { TodoTemplateRepository } from './TodoTemplateRepository';
 
 export class BackupRepository {
   public constructor(private readonly database: TransactionDatabase) {}
 
-  public async createBackup(exportedAt = new Date()): Promise<BackupV1> {
+  public async createBackup(exportedAt = new Date()): Promise<BackupV3> {
     return withTransaction(this.database, async (transaction) => {
-      const todoRepository = new TodoRepository(transaction as TransactionDatabase);
-      const settingsRepository = new SettingsRepository(transaction as TransactionDatabase);
+      const transactionDatabase = transaction as TransactionDatabase;
+      const todoRepository = new TodoRepository(transactionDatabase);
+      const settingsRepository = new SettingsRepository(transactionDatabase);
+      const templateRepository = new TodoTemplateRepository(transactionDatabase);
       const todos = await todoRepository.listAll();
       const occurrenceStates = await todoRepository.listOccurrenceStates();
       const settings = await settingsRepository.getSettings();
       const defaultReminders = await settingsRepository.getDefaultReminders();
+      const templates = await templateRepository.list();
       const todoIds = new Set(todos.map((todo) => todo.id));
-      return BackupV1Schema.parse({
+      return BackupV3Schema.parse({
         format: BACKUP_FORMAT,
         version: BACKUP_VERSION,
         exportedAt,
@@ -27,11 +31,12 @@ export class BackupRepository {
         occurrenceStates: occurrenceStates.filter((state) => todoIds.has(state.todoId)),
         settings,
         defaultReminders,
+        templates,
       });
     });
   }
 
-  public async replaceAll(backupValue: BackupV1, importedAt = new Date()): Promise<void> {
+  public async replaceAll(backupValue: BackupV3, importedAt = new Date()): Promise<void> {
     const backup = validateBackupIntegrity(backupValue);
     const timestamp = importedAt.toISOString();
     await withTransaction(this.database, async (transaction) => {
@@ -40,14 +45,16 @@ export class BackupRepository {
       await transaction.runAsync('DELETE FROM todo_occurrence_states', []);
       await transaction.runAsync('DELETE FROM todos', []);
       await transaction.runAsync('DELETE FROM default_reminder_rules', []);
+      await transaction.runAsync('DELETE FROM todo_template_reminder_rules', []);
+      await transaction.runAsync('DELETE FROM todo_templates', []);
 
       for (const todo of backup.todos) {
         await insertTodo(transaction, todoToPersistence(todo), timestamp);
         for (const [sortOrder, reminder] of todo.reminders.entries()) {
           await transaction.runAsync(
-            `INSERT INTO reminder_rules (id, todo_id, offset_minutes, sort_order)
-             VALUES (?, ?, ?, ?)`,
-            [reminder.id, todo.id, reminder.offsetMinutes, sortOrder],
+            `INSERT INTO reminder_rules (id, todo_id, anchor, offset_minutes, sort_order)
+             VALUES (?, ?, ?, ?, ?)`,
+            [reminder.id, todo.id, reminder.anchor, reminder.offsetMinutes, sortOrder],
           );
         }
       }
@@ -68,10 +75,25 @@ export class BackupRepository {
       }
       for (const [sortOrder, reminder] of backup.defaultReminders.entries()) {
         await transaction.runAsync(
-          `INSERT INTO default_reminder_rules (id, offset_minutes, sort_order)
-           VALUES (?, ?, ?)`,
-          [reminder.id, reminder.offsetMinutes, sortOrder],
+          `INSERT INTO default_reminder_rules (id, anchor, offset_minutes, sort_order)
+           VALUES (?, ?, ?, ?)`,
+          [reminder.id, reminder.anchor, reminder.offsetMinutes, sortOrder],
         );
+      }
+      for (const [sortOrder, template] of backup.templates.entries()) {
+        await transaction.runAsync(
+          `INSERT INTO todo_templates (id, name, duration_minutes, sort_order)
+           VALUES (?, ?, ?, ?)`,
+          [template.id, template.name, template.durationMinutes, sortOrder],
+        );
+        for (const [reminderSortOrder, reminder] of template.reminders.entries()) {
+          await transaction.runAsync(
+            `INSERT INTO todo_template_reminder_rules (
+              id, template_id, anchor, offset_minutes, sort_order
+             ) VALUES (?, ?, ?, ?, ?)`,
+            [reminder.id, template.id, reminder.anchor, reminder.offsetMinutes, reminderSortOrder],
+          );
+        }
       }
       const result = await transaction.runAsync(
         `UPDATE app_settings SET

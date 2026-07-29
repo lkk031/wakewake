@@ -31,6 +31,10 @@ function createDatabase(
     }),
     getFirstAsync: vi.fn(async (source: string) => {
       if (source.includes('PRAGMA user_version')) return { user_version: version };
+      if (source.includes('COUNT(*)') && source.includes('todo_template_reminder_rules')) {
+        return { count: 3 };
+      }
+      if (source.includes('COUNT(*)') && source.includes('todo_templates')) return { count: 2 };
       return null;
     }) as DatabaseExecutor['getFirstAsync'],
     getAllAsync: vi.fn(async () => []) as DatabaseExecutor['getAllAsync'],
@@ -57,13 +61,65 @@ describe('database migrations', () => {
     expect(harness.executed).toHaveLength(callsAfterUpgrade);
   });
 
-  it('upgrades a version 1 database with the theme setting', async () => {
+  it('upgrades a version 1 database through the reminder anchor migration', async () => {
     const harness = createDatabase({ initialVersion: 1 });
     await runMigrations(harness.database);
 
-    expect(harness.getVersion()).toBe(2);
+    expect(harness.getVersion()).toBe(4);
     expect(harness.executed.some((source) => source.includes('ADD COLUMN theme_mode'))).toBe(true);
     expect(harness.executed.some((source) => source.includes('CREATE TABLE todos'))).toBe(false);
+  });
+
+  it('rebuilds reminder tables with contextual anchors and composite uniqueness', async () => {
+    const harness = createDatabase({ initialVersion: 2 });
+    await runMigrations(harness.database);
+
+    const migrationSql = harness.executed.find((source) =>
+      source.includes('CREATE TABLE reminder_rules_v3'),
+    );
+    expect(migrationSql).toContain("anchor TEXT NOT NULL CHECK (anchor IN ('start', 'due'))");
+    expect(migrationSql).toContain('UNIQUE (todo_id, anchor, offset_minutes)');
+    expect(migrationSql).toContain("WHEN todos.timing_kind = 'timed' AND todos.due_at IS NOT NULL");
+    expect(migrationSql).toContain("THEN 'due'");
+    expect(migrationSql).toContain("ELSE 'start'");
+    expect(migrationSql).toContain('UNIQUE (anchor, offset_minutes)');
+    expect(migrationSql).toContain("SELECT id, 'due', offset_minutes, sort_order");
+    expect(harness.getVersion()).toBe(4);
+  });
+
+  it('creates and deterministically seeds todo templates in v4', async () => {
+    const harness = createDatabase({ initialVersion: 3 });
+    await runMigrations(harness.database);
+
+    expect(harness.getVersion()).toBe(4);
+    const schema = harness.executed.find((source) =>
+      source.includes('CREATE TABLE todo_templates'),
+    );
+    expect(schema).toContain(
+      'duration_minutes INTEGER NOT NULL CHECK (duration_minutes BETWEEN 1 AND 1440)',
+    );
+    expect(schema).toContain('UNIQUE (template_id, anchor, offset_minutes)');
+    expect(
+      harness.executed.some((source) => source.includes('CREATE TABLE reminder_rules_v3')),
+    ).toBe(false);
+    expect(harness.database.runAsync).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO todo_templates'),
+      ['00000000-0000-4000-8001-000000000001', '会议', 30, 0],
+    );
+    expect(harness.database.runAsync).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO todo_templates'),
+      ['00000000-0000-4000-8001-000000000002', '作业截止', 1_440, 1],
+    );
+    expect(harness.database.runAsync).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO todo_template_reminder_rules'),
+      [
+        '00000000-0000-4000-8001-000000000101',
+        '00000000-0000-4000-8001-000000000001',
+        'start',
+        10,
+        0,
+      ],
+    );
   });
 
   it('does not advance the version when a migration fails', async () => {

@@ -301,9 +301,9 @@ export class TodoRepository {
     await transaction.runAsync('DELETE FROM reminder_rules WHERE todo_id = ?', [todo.id]);
     for (const [sortOrder, reminder] of todo.reminders.entries()) {
       await transaction.runAsync(
-        `INSERT INTO reminder_rules (id, todo_id, offset_minutes, sort_order)
-         VALUES (?, ?, ?, ?)`,
-        [reminder.id, todo.id, reminder.offsetMinutes, sortOrder],
+        `INSERT INTO reminder_rules (id, todo_id, anchor, offset_minutes, sort_order)
+         VALUES (?, ?, ?, ?, ?)`,
+        [reminder.id, todo.id, reminder.anchor, reminder.offsetMinutes, sortOrder],
       );
     }
   }
@@ -312,7 +312,7 @@ export class TodoRepository {
     if (todoIds.length === 0) return [];
     const placeholders = todoIds.map(() => '?').join(', ');
     return this.database.getAllAsync<ReminderRuleRow>(
-      `SELECT id, todo_id, offset_minutes, sort_order FROM reminder_rules
+      `SELECT id, todo_id, anchor, offset_minutes, sort_order FROM reminder_rules
        WHERE todo_id IN (${placeholders}) ORDER BY todo_id, sort_order, id`,
       todoIds,
     );

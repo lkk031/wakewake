@@ -1,8 +1,8 @@
-import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { getWallClockDateTime } from '@wakewake/domain';
 
+import { CompletionCheckbox } from '@/components/CompletionCheckbox';
 import { useSetTodoCompletion } from '@/query/todoQueries';
 import { useAppTheme } from '@/theme/useAppTheme';
 import type { VisibleTodoItem } from './visibleTodoItems';
@@ -27,10 +27,8 @@ export function TodoRow({ item, timezone }: TodoRowProps) {
       onPress={() => router.push({ pathname: '/todo/[id]', params: { id: item.todo.id } })}
       style={[styles.row, { borderBottomColor: theme.color.border }]}
     >
-      <Pressable
-        accessibilityLabel={completed ? '恢复未完成' : '标记完成'}
-        accessibilityRole="checkbox"
-        accessibilityState={{ checked: completed }}
+      <CompletionCheckbox
+        completed={completed}
         onPress={() =>
           void setCompletion.mutateAsync({
             todoId: item.todo.id,
@@ -38,22 +36,7 @@ export function TodoRow({ item, timezone }: TodoRowProps) {
             ...(item.occurrenceKey === null ? {} : { occurrenceKey: item.occurrenceKey }),
           })
         }
-        style={[
-          styles.checkbox,
-          {
-            borderColor: completed ? theme.color.accent : theme.color.textMuted,
-            backgroundColor: completed ? theme.color.accent : 'transparent',
-          },
-        ]}
-      >
-        {completed ? (
-          <Ionicons
-            name="checkmark"
-            size={15}
-            color={theme.isDark ? theme.color.background : theme.color.surface}
-          />
-        ) : null}
-      </Pressable>
+      />
       <View style={styles.copy}>
         <Text
           style={[
@@ -92,14 +75,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     gap: 13,
     borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderWidth: 1.5,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   copy: { flex: 1 },
   title: { fontSize: 15, fontWeight: '700' },

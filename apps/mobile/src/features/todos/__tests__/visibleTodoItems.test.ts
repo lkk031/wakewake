@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   compareVisibleTodoItems,
+  partitionVisibleTodoItemsByCompletion,
   selectVisibleTodoItems,
   visibleTodoDate,
 } from '../visibleTodoItems';
@@ -47,6 +48,66 @@ describe('visible todo items', () => {
       ['2026-07-28T09:00:00', 'open'],
     ]);
     expect(visibleTodoDate(items[1]!, 'Asia/Shanghai')).toBe('2026-07-27');
+  });
+
+  it('stably partitions completed items after unfinished items', () => {
+    const items = selectVisibleTodoItems(
+      [recurringTodo],
+      [
+        {
+          todoId: recurringTodo.id,
+          occurrenceKey: '2026-07-27T09:00:00',
+          status: 'completed',
+          completedAt: new Date('2026-07-27T02:00:00.000Z'),
+          version: 1,
+        },
+        {
+          todoId: recurringTodo.id,
+          occurrenceKey: '2026-07-28T09:00:00',
+          status: 'cancelled',
+          completedAt: null,
+          version: 1,
+        },
+      ],
+      {
+        start: new Date('2026-07-25T16:00:00.000Z'),
+        end: new Date('2026-07-28T16:00:00.000Z'),
+      },
+    );
+
+    const originalKeys = items.map((item) => item.key);
+    const sections = partitionVisibleTodoItemsByCompletion(items);
+
+    expect(sections.unfinished.map((item) => [item.occurrenceKey, item.status])).toEqual([
+      ['2026-07-26T09:00:00', 'open'],
+      ['2026-07-28T09:00:00', 'cancelled'],
+    ]);
+    expect(sections.completed.map((item) => [item.occurrenceKey, item.status])).toEqual([
+      ['2026-07-27T09:00:00', 'completed'],
+    ]);
+    expect([...sections.unfinished, ...sections.completed].map((item) => item.key)).toEqual([
+      originalKeys[0],
+      originalKeys[2],
+      originalKeys[1],
+    ]);
+  });
+
+  it('keeps an all-completed day available for the completed section', () => {
+    const completedTodo: Todo = {
+      ...recurringTodo,
+      recurrence: null,
+      status: 'completed',
+      completedAt: new Date('2026-07-26T02:00:00.000Z'),
+    };
+    const items = selectVisibleTodoItems([completedTodo], [], {
+      start: new Date('2026-07-25T16:00:00.000Z'),
+      end: new Date('2026-07-27T16:00:00.000Z'),
+    });
+
+    expect(partitionVisibleTodoItemsByCompletion(items)).toEqual({
+      unfinished: [],
+      completed: items,
+    });
   });
 
   it('sorts all-day items before timed items', () => {

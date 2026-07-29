@@ -3,7 +3,20 @@ import type { Todo } from '@wakewake/domain';
 
 import type { TodoRange } from '@/db/repositories/TodoRepository';
 import { useAppServices } from '@/providers/AppServicesProvider';
+import { reconcileNotificationsSafely } from './notificationQueries';
 import { todoKeys } from './queryKeys';
+
+interface TodoMutationFollowUpDependencies {
+  invalidateTodoQueries: () => Promise<unknown>;
+  reconcileNotifications: () => Promise<unknown>;
+}
+
+export async function runTodoMutationFollowUp({
+  invalidateTodoQueries,
+  reconcileNotifications,
+}: TodoMutationFollowUpDependencies): Promise<void> {
+  await Promise.all([invalidateTodoQueries(), reconcileNotifications()]);
+}
 
 export function useInboxTodos() {
   const { todoRepository } = useAppServices();
@@ -50,10 +63,12 @@ export function useCreateTodo() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (todo: Todo) => todoRepository.create(todo),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: todoKeys.all });
-      void notificationCoordinator.reconcile().catch(() => undefined);
-    },
+    onSuccess: () =>
+      runTodoMutationFollowUp({
+        invalidateTodoQueries: () => queryClient.invalidateQueries({ queryKey: todoKeys.all }),
+        reconcileNotifications: () =>
+          reconcileNotificationsSafely(notificationCoordinator, queryClient),
+      }),
   });
 }
 
@@ -62,10 +77,12 @@ export function useUpdateTodo() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (todo: Todo) => todoRepository.update(todo),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: todoKeys.all });
-      void notificationCoordinator.reconcile().catch(() => undefined);
-    },
+    onSuccess: () =>
+      runTodoMutationFollowUp({
+        invalidateTodoQueries: () => queryClient.invalidateQueries({ queryKey: todoKeys.all }),
+        reconcileNotifications: () =>
+          reconcileNotificationsSafely(notificationCoordinator, queryClient),
+      }),
   });
 }
 
@@ -81,10 +98,12 @@ export function useSetTodoCompletion() {
   return useMutation({
     mutationFn: ({ todoId, completedAt, occurrenceKey }: CompletionInput) =>
       todoRepository.setCompletion(todoId, completedAt, occurrenceKey),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: todoKeys.all });
-      void notificationCoordinator.reconcile().catch(() => undefined);
-    },
+    onSuccess: () =>
+      runTodoMutationFollowUp({
+        invalidateTodoQueries: () => queryClient.invalidateQueries({ queryKey: todoKeys.all }),
+        reconcileNotifications: () =>
+          reconcileNotificationsSafely(notificationCoordinator, queryClient),
+      }),
   });
 }
 
@@ -93,10 +112,12 @@ export function useDeleteTodo() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => todoRepository.softDelete(id),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: todoKeys.all });
-      void notificationCoordinator.reconcile().catch(() => undefined);
-    },
+    onSuccess: () =>
+      runTodoMutationFollowUp({
+        invalidateTodoQueries: () => queryClient.invalidateQueries({ queryKey: todoKeys.all }),
+        reconcileNotifications: () =>
+          reconcileNotificationsSafely(notificationCoordinator, queryClient),
+      }),
   });
 }
 
@@ -105,9 +126,11 @@ export function useRestoreDeletedTodo() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => todoRepository.restoreDeleted(id),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: todoKeys.all });
-      void notificationCoordinator.reconcile().catch(() => undefined);
-    },
+    onSuccess: () =>
+      runTodoMutationFollowUp({
+        invalidateTodoQueries: () => queryClient.invalidateQueries({ queryKey: todoKeys.all }),
+        reconcileNotifications: () =>
+          reconcileNotificationsSafely(notificationCoordinator, queryClient),
+      }),
   });
 }

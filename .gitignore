@@ -3,6 +3,7 @@ node_modules/
 .expo/
 dist/
 coverage/
+.claude/
 
 # Downloaded and generated Android packages
 *.apk

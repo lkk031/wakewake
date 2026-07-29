@@ -4,3 +4,4 @@ export * from './recurrence';
 export * from './occurrence';
 export * from './backup';
 export * from './timezone';
+export * from './template';

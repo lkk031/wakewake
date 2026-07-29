@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { useMemo } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   useDeleteTodo,
@@ -37,16 +38,26 @@ export function EditTodoScreen({ id }: EditTodoScreenProps) {
   );
 
   if (todoQuery.isPending || settings.isPending) {
-    return <ActivityIndicator style={styles.loading} color={theme.color.accent} />;
+    return (
+      <SafeAreaView
+        edges={['top', 'bottom']}
+        style={[styles.flex, { backgroundColor: theme.color.background }]}
+      >
+        <ActivityIndicator style={styles.loading} color={theme.color.accent} />
+      </SafeAreaView>
+    );
   }
   if (!todoQuery.data || !settings.data || !initialValues) {
     return (
-      <View style={[styles.messagePage, { backgroundColor: theme.color.background }]}>
+      <SafeAreaView
+        edges={['top', 'bottom']}
+        style={[styles.messagePage, { backgroundColor: theme.color.background }]}
+      >
         <Text style={{ color: theme.color.text }}>事项不存在或已删除。</Text>
         <Pressable onPress={() => router.back()}>
           <Text style={{ color: theme.color.accent }}>返回</Text>
         </Pressable>
-      </View>
+      </SafeAreaView>
     );
   }
 
@@ -59,7 +70,10 @@ export function EditTodoScreen({ id }: EditTodoScreenProps) {
   }
 
   return (
-    <View style={styles.flex}>
+    <SafeAreaView
+      edges={['top', 'bottom']}
+      style={[styles.flex, { backgroundColor: theme.color.background }]}
+    >
       <TodoForm
         initialValues={initialValues}
         timezone={settings.data.timezone}
@@ -114,7 +128,7 @@ export function EditTodoScreen({ id }: EditTodoScreenProps) {
           <Text style={[styles.action, { color: theme.color.critical }]}>删除</Text>
         </Pressable>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 

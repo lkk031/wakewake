@@ -11,10 +11,13 @@ export interface NativeScheduledNotification {
   logicalKey: string | null;
 }
 
+export type NotificationChannelState = 'enabled' | 'blocked' | 'missing' | 'not-applicable';
+
 export interface NotificationPermissionState {
   status: 'granted' | 'denied' | 'undetermined' | 'unsupported';
   granted: boolean;
   canAskAgain: boolean;
+  channelState: NotificationChannelState;
 }
 
 export interface NotificationNativeAdapter {
@@ -23,7 +26,7 @@ export interface NotificationNativeAdapter {
   getPermissionState(): Promise<NotificationPermissionState>;
   requestPermission(): Promise<NotificationPermissionState>;
   listScheduled(): Promise<NativeScheduledNotification[]>;
-  schedule(notification: DesiredNotification): Promise<string>;
+  schedule(notification: DesiredNotification, identifier?: string | undefined): Promise<string>;
   scheduleTest(scheduledAt: Date): Promise<string>;
   cancel(identifier: string): Promise<void>;
 }
@@ -46,13 +49,16 @@ export class ExpoNotificationAdapter implements NotificationNativeAdapter {
 
   public async getPermissionState(): Promise<NotificationPermissionState> {
     if (!this.supported) return unsupportedPermissionState();
-    return mapPermissionState(await getExpoNotificationsModule().getPermissionsAsync());
+    const Notifications = getExpoNotificationsModule();
+    const permission = await Notifications.getPermissionsAsync();
+    return mapPermissionState(permission, await this.getChannelState());
   }
 
   public async requestPermission(): Promise<NotificationPermissionState> {
     if (!this.supported) return unsupportedPermissionState();
     await this.ensureChannel();
-    return mapPermissionState(await getExpoNotificationsModule().requestPermissionsAsync());
+    const permission = await getExpoNotificationsModule().requestPermissionsAsync();
+    return mapPermissionState(permission, await this.getChannelState());
   }
 
   public async listScheduled(): Promise<NativeScheduledNotification[]> {
@@ -69,10 +75,14 @@ export class ExpoNotificationAdapter implements NotificationNativeAdapter {
       .filter((request) => request.logicalKey !== null);
   }
 
-  public async schedule(notification: DesiredNotification): Promise<string> {
+  public async schedule(
+    notification: DesiredNotification,
+    identifier?: string | undefined,
+  ): Promise<string> {
     if (!this.supported) throw new Error('Notifications are unavailable in this runtime');
     const Notifications = getExpoNotificationsModule();
     return Notifications.scheduleNotificationAsync({
+      ...(identifier === undefined ? {} : { identifier }),
       content: {
         title: 'WakeWake 提醒',
         body: '你有一项待办即将到时间。',
@@ -113,10 +123,19 @@ export class ExpoNotificationAdapter implements NotificationNativeAdapter {
     if (!this.supported) return;
     await getExpoNotificationsModule().cancelScheduledNotificationAsync(identifier);
   }
+
+  private async getChannelState(): Promise<NotificationChannelState> {
+    if (Platform.OS !== 'android') return 'not-applicable';
+    const Notifications = getExpoNotificationsModule();
+    const channel = await Notifications.getNotificationChannelAsync(REMINDER_CHANNEL_ID);
+    if (channel === null) return 'missing';
+    return channel.importance === Notifications.AndroidImportance.NONE ? 'blocked' : 'enabled';
+  }
 }
 
 function mapPermissionState(
   permission: Notifications.NotificationPermissionsStatus,
+  channelState: NotificationChannelState,
 ): NotificationPermissionState {
   const { IosAuthorizationStatus } = getExpoNotificationsModule();
   const provisional = permission.ios?.status === IosAuthorizationStatus.PROVISIONAL;
@@ -124,11 +143,17 @@ function mapPermissionState(
     status: permission.granted || provisional ? 'granted' : permission.status,
     granted: permission.granted || provisional,
     canAskAgain: permission.canAskAgain,
+    channelState,
   };
 }
 
 function unsupportedPermissionState(): NotificationPermissionState {
-  return { status: 'unsupported', granted: false, canAskAgain: false };
+  return {
+    status: 'unsupported',
+    granted: false,
+    canAskAgain: false,
+    channelState: 'not-applicable',
+  };
 }
 
 if (isNotificationRuntimeSupported()) {

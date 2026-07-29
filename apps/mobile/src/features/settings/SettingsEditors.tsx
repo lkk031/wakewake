@@ -16,6 +16,7 @@ import {
   IanaTimezoneSchema,
   ReminderRulesSchema,
   type BackupSettings,
+  type ReminderAnchor,
   type ReminderRule,
   type ThemeMode,
 } from '@wakewake/domain';
@@ -124,42 +125,63 @@ interface ReminderEditorProps extends EditorProps {
 
 export function ReminderEditor({ visible, value, saving, onClose, onSave }: ReminderEditorProps) {
   const theme = useAppTheme();
-  const [offsets, setOffsets] = useState<number[]>([]);
+  const [drafts, setDrafts] = useState<Pick<ReminderRule, 'anchor' | 'offsetMinutes'>[]>([]);
+  const [anchor, setAnchor] = useState<ReminderAnchor>('due');
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (visible) {
-      setOffsets(value.map((rule) => rule.offsetMinutes).sort((a, b) => b - a));
+      setDrafts(
+        value.map(({ anchor: ruleAnchor, offsetMinutes }) => ({
+          anchor: ruleAnchor,
+          offsetMinutes,
+        })),
+      );
+      setAnchor('due');
       setText('');
       setError(null);
     }
   }, [value, visible]);
 
-  function addOffset(offsetValue = Number(text)) {
+  function hasRule(ruleAnchor: ReminderAnchor, offsetMinutes: number): boolean {
+    return drafts.some(
+      (rule) => rule.anchor === ruleAnchor && rule.offsetMinutes === offsetMinutes,
+    );
+  }
+
+  function removeRule(ruleAnchor: ReminderAnchor, offsetMinutes: number) {
+    setDrafts((current) =>
+      current.filter((rule) => rule.anchor !== ruleAnchor || rule.offsetMinutes !== offsetMinutes),
+    );
+  }
+
+  function addOffset(offsetValue = Number(text), ruleAnchor = anchor) {
     if (!Number.isInteger(offsetValue) || offsetValue < 0 || offsetValue > 525_600) {
       setError('请输入 0–525600 之间的整数分钟数');
       return;
     }
-    if (offsets.includes(offsetValue)) {
-      setError('该提醒时间已存在');
+    if (hasRule(ruleAnchor, offsetValue)) {
+      setError(`该${anchorLabel(ruleAnchor)}提醒时间已存在`);
       return;
     }
-    if (offsets.length >= 10) {
+    if (drafts.length >= 10) {
       setError('最多设置 10 条默认提醒');
       return;
     }
-    setOffsets((current) => [...current, offsetValue].sort((a, b) => b - a));
+    setDrafts((current) => [...current, { anchor: ruleAnchor, offsetMinutes: offsetValue }]);
     setText('');
     setError(null);
   }
 
   async function save() {
-    const existingIds = new Map(value.map((rule) => [rule.offsetMinutes, rule.id]));
+    const existingIds = new Map(
+      value.map((rule) => [reminderKey(rule.anchor, rule.offsetMinutes), rule.id]),
+    );
     const rules = ReminderRulesSchema.parse(
-      offsets.map((offsetMinutes) => ({
-        id: existingIds.get(offsetMinutes) ?? Crypto.randomUUID(),
-        offsetMinutes,
+      drafts.map((rule) => ({
+        ...rule,
+        id: existingIds.get(reminderKey(rule.anchor, rule.offsetMinutes)) ?? Crypto.randomUUID(),
       })),
     );
     await onSave(rules);
@@ -167,13 +189,23 @@ export function ReminderEditor({ visible, value, saving, onClose, onSave }: Remi
 
   return (
     <EditorModal visible={visible} title="默认提醒" saving={saving} onClose={onClose} onSave={save}>
+      <View style={styles.chips}>
+        {(['start', 'due'] as const).map((item) => (
+          <ChoiceChip
+            key={item}
+            label={`${anchorLabel(item)}提醒`}
+            selected={anchor === item}
+            onPress={() => setAnchor(item)}
+          />
+        ))}
+      </View>
       <View style={styles.inlineInput}>
         <TextInput
-          accessibilityLabel="提前分钟数"
+          accessibilityLabel={`${anchorLabel(anchor)}前分钟数`}
           keyboardType="number-pad"
           value={text}
           onChangeText={setText}
-          placeholder="提前分钟数（0 表示到期时）"
+          placeholder={`${anchorLabel(anchor)}前分钟数（0 表示准时）`}
           style={[inputStyle(theme), styles.flex]}
         />
         <Pressable
@@ -192,48 +224,54 @@ export function ReminderEditor({ visible, value, saving, onClose, onSave }: Remi
         </Pressable>
       </View>
       <View style={styles.chips}>
-        {[
-          [0, '到期时'],
-          [10, '10 分钟'],
-          [60, '1 小时'],
-          [1_440, '1 天'],
-          [10_080, '1 周'],
-        ].map(([offset, label]) => (
+        {[0, 10, 60, 1_440, 10_080].map((offset) => (
           <ChoiceChip
-            key={offset}
-            label={String(label)}
-            selected={offsets.includes(Number(offset))}
+            key={`${anchor}:${offset}`}
+            label={formatOffset(offset, anchor, false)}
+            selected={hasRule(anchor, offset)}
             onPress={() =>
-              offsets.includes(Number(offset))
-                ? setOffsets((current) => current.filter((item) => item !== Number(offset)))
-                : addOffset(Number(offset))
+              hasRule(anchor, offset) ? removeRule(anchor, offset) : addOffset(offset, anchor)
             }
           />
         ))}
       </View>
-      {offsets.length === 0 ? <HelpText>新事项默认不提醒。</HelpText> : null}
-      {offsets.map((offset) => (
-        <View key={offset} style={styles.reminderRow}>
-          <HelpText>{formatOffset(offset)}</HelpText>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`删除${formatOffset(offset)}`}
-            onPress={() => setOffsets((current) => current.filter((item) => item !== offset))}
-          >
-            <Text style={[styles.remove, { color: theme.color.critical }]}>删除</Text>
-          </Pressable>
-        </View>
-      ))}
+      {drafts.length === 0 ? <HelpText>新事项默认不提醒。</HelpText> : null}
+      {(['start', 'due'] as const).map((ruleAnchor) =>
+        drafts
+          .filter((rule) => rule.anchor === ruleAnchor)
+          .sort((a, b) => b.offsetMinutes - a.offsetMinutes)
+          .map((rule) => (
+            <View key={reminderKey(rule.anchor, rule.offsetMinutes)} style={styles.reminderRow}>
+              <HelpText>{formatOffset(rule.offsetMinutes, rule.anchor, true)}</HelpText>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`删除${formatOffset(rule.offsetMinutes, rule.anchor, true)}`}
+                onPress={() => removeRule(rule.anchor, rule.offsetMinutes)}
+              >
+                <Text style={[styles.remove, { color: theme.color.critical }]}>删除</Text>
+              </Pressable>
+            </View>
+          )),
+      )}
       <Pressable
         accessibilityRole="button"
-        onPress={() => setOffsets([...DEFAULT_REMINDER_OFFSETS])}
+        onPress={() =>
+          setDrafts(
+            DEFAULT_REMINDER_OFFSETS.map((offsetMinutes) => ({
+              anchor: 'due',
+              offsetMinutes,
+            })),
+          )
+        }
       >
         <Text style={[styles.link, { color: theme.color.accent }]}>
-          恢复推荐值（1 天、1 小时、10 分钟）
+          恢复推荐值（截止前 1 天、1 小时、10 分钟）
         </Text>
       </Pressable>
       <FieldError message={error} />
-      <HelpText>只影响之后创建的事项，每项仍保存自己的提醒副本。</HelpText>
+      <HelpText>
+        只影响之后创建的事项；开始与截止提醒合计最多 10 条，全天事项会统一使用开始日 09:00。
+      </HelpText>
     </EditorModal>
   );
 }
@@ -395,12 +433,21 @@ function themeModeLabel(mode: ThemeMode): string {
   return { system: '跟随系统', light: '浅色', dark: '深色' }[mode];
 }
 
-function formatOffset(offset: number): string {
-  if (offset === 0) return '到期时';
-  if (offset % 10_080 === 0) return `提前 ${offset / 10_080} 周`;
-  if (offset % 1_440 === 0) return `提前 ${offset / 1_440} 天`;
-  if (offset % 60 === 0) return `提前 ${offset / 60} 小时`;
-  return `提前 ${offset} 分钟`;
+function reminderKey(anchor: ReminderAnchor, offsetMinutes: number): string {
+  return `${anchor}:${offsetMinutes}`;
+}
+
+function anchorLabel(anchor: ReminderAnchor): string {
+  return anchor === 'start' ? '开始' : '截止';
+}
+
+function formatOffset(offset: number, anchor: ReminderAnchor, contextual: boolean): string {
+  if (offset === 0) return contextual ? `${anchorLabel(anchor)}时` : '准时';
+  const prefix = contextual ? `${anchorLabel(anchor)}前 ` : '';
+  if (offset % 10_080 === 0) return `${prefix}${offset / 10_080} 周`;
+  if (offset % 1_440 === 0) return `${prefix}${offset / 1_440} 天`;
+  if (offset % 60 === 0) return `${prefix}${offset / 60} 小时`;
+  return `${prefix}${offset} 分钟`;
 }
 
 const styles = StyleSheet.create({

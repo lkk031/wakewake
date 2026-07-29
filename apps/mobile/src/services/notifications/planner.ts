@@ -1,9 +1,10 @@
 import {
   calculateReminderAt,
   expandOccurrences,
-  getReminderBase,
   MAX_REMINDER_OFFSET_MINUTES,
+  startOfLocalDateAtHour,
   type OccurrenceState,
+  type ReminderAnchor,
   type ReminderRule,
   type Todo,
   type TodoTiming,
@@ -17,11 +18,16 @@ export interface DesiredNotification {
   todoId: string;
   occurrenceKey: string | null;
   reminderRuleId: string;
+  anchor: ReminderAnchor;
   scheduledAt: Date;
 }
 
 export interface NotificationPlan {
   notifications: DesiredNotification[];
+  plannedCount: number;
+  skippedExpiredCount: number;
+  missingTargetCount: number;
+  truncatedCount: number;
   truncated: boolean;
 }
 
@@ -53,6 +59,7 @@ export function planNotifications(
     occurrenceStates.map((state) => [`${state.todoId}\0${state.occurrenceKey}`, state]),
   );
   const desired: DesiredNotification[] = [];
+  const diagnostics = { skippedExpiredCount: 0, missingTargetCount: 0 };
 
   for (const todo of todos) {
     if (
@@ -64,7 +71,16 @@ export function planNotifications(
     }
 
     if (todo.recurrence === null) {
-      appendReminderSchedules(desired, todo, null, todo.timing, todo.reminders, now, horizonEnd);
+      appendReminderSchedules(
+        desired,
+        diagnostics,
+        todo,
+        null,
+        todo.timing,
+        todo.reminders,
+        now,
+        horizonEnd,
+      );
       continue;
     }
 
@@ -78,6 +94,7 @@ export function planNotifications(
       if (state !== undefined && state.status !== 'open') continue;
       appendReminderSchedules(
         desired,
+        diagnostics,
         todo,
         occurrence.occurrenceKey,
         occurrence.timing,
@@ -92,14 +109,26 @@ export function planNotifications(
     (a, b) =>
       a.scheduledAt.getTime() - b.scheduledAt.getTime() || a.logicalKey.localeCompare(b.logicalKey),
   );
+  const notifications = desired.slice(0, maxNotifications);
+  const truncatedCount = desired.length - notifications.length;
   return {
-    notifications: desired.slice(0, maxNotifications),
-    truncated: desired.length > maxNotifications,
+    notifications,
+    plannedCount: notifications.length,
+    skippedExpiredCount: diagnostics.skippedExpiredCount,
+    missingTargetCount: diagnostics.missingTargetCount,
+    truncatedCount,
+    truncated: truncatedCount > 0,
   };
+}
+
+interface PlanningDiagnostics {
+  skippedExpiredCount: number;
+  missingTargetCount: number;
 }
 
 function appendReminderSchedules(
   output: DesiredNotification[],
+  diagnostics: PlanningDiagnostics,
   todo: Todo,
   occurrenceKey: string | null,
   timing: Exclude<TodoTiming, { kind: 'unscheduled' }>,
@@ -107,32 +136,52 @@ function appendReminderSchedules(
   now: Date,
   horizonEnd: Date,
 ): void {
-  const base = getReminderBase(timing);
-  if (base === null) return;
-
   for (const rule of reminders) {
+    const base = getReminderAnchor(timing, rule.anchor);
+    if (base === null) {
+      diagnostics.missingTargetCount += 1;
+      continue;
+    }
+
     const scheduledAt = calculateReminderAt(base, rule.offsetMinutes);
-    if (scheduledAt <= now || scheduledAt > horizonEnd) continue;
+    if (scheduledAt <= now) {
+      diagnostics.skippedExpiredCount += 1;
+      continue;
+    }
+    if (scheduledAt > horizonEnd) continue;
     output.push({
-      logicalKey: notificationLogicalKey(todo.id, occurrenceKey, rule.id, scheduledAt),
+      logicalKey: notificationLogicalKey(todo.id, occurrenceKey, rule.anchor, rule.id, scheduledAt),
       todoId: todo.id,
       occurrenceKey,
       reminderRuleId: rule.id,
+      anchor: rule.anchor,
       scheduledAt,
     });
   }
 }
 
+function getReminderAnchor(
+  timing: Exclude<TodoTiming, { kind: 'unscheduled' }>,
+  anchor: ReminderAnchor,
+): Date | null {
+  if (timing.kind === 'allDay') {
+    return anchor === 'start' ? startOfLocalDateAtHour(timing.startDate, 9, timing.timezone) : null;
+  }
+  return anchor === 'start' ? timing.startAt : timing.dueAt;
+}
+
 export function notificationLogicalKey(
   todoId: string,
   occurrenceKey: string | null,
+  anchor: ReminderAnchor,
   reminderRuleId: string,
   scheduledAt: Date,
 ): string {
   return [
-    'wakewake-v1',
+    'wakewake-v2',
     todoId,
     occurrenceKey ?? 'single',
+    anchor,
     reminderRuleId,
     scheduledAt.toISOString(),
   ].join('|');
